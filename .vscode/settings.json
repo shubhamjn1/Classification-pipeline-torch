@@ -1,0 +1,6 @@
+{
+    "git.ignoreLimitWarning": true,
+    "css.validate": false,
+    "editor.unusualLineTerminators": "off",
+    "python.linting.enabled": false
+}
