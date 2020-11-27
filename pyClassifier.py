@@ -6,24 +6,25 @@ from sklearn.datasets import load_wine
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Dataset
-from torch.optim as optim
+import torch.optim as optim
+from tqdm import tqdm
 
 class pyClassifier():
     """
     """
     def __init__(self, X_train, X_test, y_train, y_test):
-        super.__init__()
+        # super.__init__()
         self.X_train = X_train
         self.X_test = X_test
         self.y_train = y_train
         self.y_test = y_test
 
         # set parameters for NN
-        self.NUM_FEATURES = len(self.X_train.columns)
+        self.NUM_FEATURES = (self.X_train.shape[1])
         self.NUM_CLASSES = len(np.unique(self.y_train))
     
-    @staticmethod
-    def processData(self):
+    
+    def processData(self, batch_size = 16):
         """
         docstring
         """
@@ -45,12 +46,12 @@ class pyClassifier():
         return train_loader, test_loader
 
     
-    def fitNN(self, epoch = 10, batch_size = 16, lr = 0.01):
+    def fitNN(self, epoch = 10, lr = 0.01):
         """
         docstring
         """
         # dataprep
-        train_loader, test_loader = processData()
+        train_loader, test_loader = self.processData()
         
         # setup
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -64,8 +65,51 @@ class pyClassifier():
         optimizer = optim.Adam(model.parameters(), lr = lr)
 
         print (model)
-        
 
+        # saving acc and losses per epoch
+        accuracy_stats = {'train':[], 'val':[]}
+        loss_stats = {'train':[], 'val':[]}
+
+        # training starts
+        print ("Begin Training")
+        for e in tqdm(range(1, epoch+1)):
+            # TRAINING
+            train_epoch_loss = 0
+            train_epoch_acc = 0
+
+            model.train()
+            for X_train_batch, y_train_batch in train_loader:
+                X_train_batch, y_train_batch = X_train_batch.to(device), y_train_batch.to(device)
+                optimizer.zero_grad()
+
+                y_train_pred = model(X_train_batch)
+                train_loss = criterion(y_train_pred, y_train_batch)
+                train_acc = self.multi_acc(y_train_pred, y_train_batch)
+                
+                train_loss.backward()
+                optimizer.step()
+
+                train_epoch_loss += train_loss.item()
+                train_epoch_acc += train_acc.item()
+
+            loss_stats['train'].append(train_epoch_loss/len(train_loader))
+            accuracy_stats['train'].append(train_epoch_acc/len(train_loader))
+            
+            print(f'Epoch {e+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} \
+                    Train Acc: {train_epoch_acc/len(train_loader):.3f}')
+
+        return model, accuracy_stats, loss_stats
+
+
+    def multi_acc(self, y_pred, y_test):
+        y_pred_softmax = torch.log_softmax(y_pred, dim = 1)
+        _, y_pred_labels = torch.max(y_pred_softmax, dim = 1)
+
+        correct_predictions = (y_pred_labels == y_test).float()
+        acc = correct_predictions.sum() / len(correct_predictions)
+
+        acc = torch.round(acc)*100
+        return acc
         
 class ClassifierDataset(Dataset):
     """To prepare item level dataset for NN
@@ -90,25 +134,32 @@ class classifierNN(nn.Module):
         nn ([type]): [description]
     """
     def __init__(self, num_features, num_class):
-        super.__init__()
+        # super.__init__()
+        super(classifierNN, self).__init__()
 
         self.layer1 = nn.Linear(num_features, 512)
         self.layer2 = nn.Linear(512, 128)
         self.layer3 = nn.Linear(128, 64)
         self.layer_out = nn.Linear(64, num_class)
 
-        self.relu = nn.ReLU
+        self.relu = nn.ReLU()
         self.dropout = nn.Dropout(0.25)
-        
+        self.batchnorm1 = nn.BatchNorm1d(512)
+        self.batchnorm2 = nn.BatchNorm1d(128)
+        self.batchnorm3 = nn.BatchNorm1d(64)
+
     def forward(self, x):
         x = self.layer1(x)
+        x = self.batchnorm1(x)
         x = self.relu(x)
 
         x = self.layer2(x)
+        x = self.batchnorm2(x)
         x = self.relu(x)
         x = self.dropout(x)
 
         x = self.layer3(x)
+        x = self.batchnorm3(x)
         x = self.relu(x)
         x = self.dropout(x)
 
@@ -124,7 +175,7 @@ if __name__ == "__main__":
     data = data['data']
 
     # split into train test
-    X_train, X_test, y_train, y_test = train_test_split(data, target_values, test_size=0.25, \
+    X_train, X_test, y_train, y_test = train_test_split(data, target_values, test_size=0.1, \
         stratify=target_values, random_state=2020)
     
     # normalize the data
@@ -134,4 +185,8 @@ if __name__ == "__main__":
 
     X_train, y_train = np.array(X_train), np.array(y_train)
     X_test, y_test = np.array(X_test), np.array(y_test)
+
+    print (f"Train size:{X_train.shape}, Test size:{X_test.shape}")
+    classifier = pyClassifier(X_train, X_test, y_train, y_test)
+    classifier.fitNN()
 
