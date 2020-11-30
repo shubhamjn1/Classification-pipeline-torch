@@ -12,12 +12,14 @@ from tqdm import tqdm
 class pyClassifier():
     """
     """
-    def __init__(self, X_train, X_test, y_train, y_test):
+    def __init__(self, X_train, X_test,X_val, y_train, y_test, y_val):
         # super.__init__()
         self.X_train = X_train
         self.X_test = X_test
         self.y_train = y_train
         self.y_test = y_test
+        self.X_val = X_val
+        self.y_val = y_val
 
         # set parameters for NN
         self.NUM_FEATURES = (self.X_train.shape[1])
@@ -36,14 +38,17 @@ class pyClassifier():
         test_dataset = ClassifierDataset(torch.from_numpy(self.X_test).float(), \
             torch.from_numpy(self.y_test).long())
 
+        val_dataset = ClassifierDataset(torch.from_numpy(self.X_val).float(), \
+            torch.from_numpy(self.y_val).long())
+
         # dataloaders
         train_loader = DataLoader(dataset = train_dataset,
                                   batch_size=batch_size,
                                   shuffle=True)
         
         test_loader = DataLoader(dataset = test_dataset, batch_size=1)
-
-        return train_loader, test_loader
+        val_loader = DataLoader(dataset = val_dataset, batch_size=1)
+        return train_loader, test_loader,val_loader
 
     
     def fitNN(self, epoch = 10, lr = 0.01):
@@ -51,14 +56,14 @@ class pyClassifier():
         docstring
         """
         # dataprep
-        train_loader, test_loader = self.processData()
+        train_loader, test_loader,val_loader = self.processData()
         
         # setup
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         print (f"Using {device}")
         
         # model call and loss
-        model = classifierNN(num_features=self.NUM_FEATURES, num_class=self.NUM_CLASSES)
+        model = classifierDNN(num_features=self.NUM_FEATURES, num_class=self.NUM_CLASSES)
         model.to(device)
 
         criterion = nn.CrossEntropyLoss()
@@ -72,7 +77,7 @@ class pyClassifier():
 
         # training starts
         print ("Begin Training")
-        for e in tqdm(range(1, epoch+1)):
+        for e in (range(1, epoch+1)):
             # TRAINING
             train_epoch_loss = 0
             train_epoch_acc = 0
@@ -92,11 +97,29 @@ class pyClassifier():
                 train_epoch_loss += train_loss.item()
                 train_epoch_acc += train_acc.item()
 
+            # VALIDATION
+            with torch.no_grad():
+                val_epoch_loss = 0
+                val_epoch_acc = 0
+
+                model.eval()
+                for X_val_batch, y_val_batch in val_loader:
+                    X_val_batch, y_val_batch = X_val_batch.to(device), y_val_batch.to(device)
+
+                    y_val_pred = model(X_val_batch)
+                    val_loss = criterion(y_val_pred, y_val_batch)
+                    val_acc = self.multi_acc(y_val_pred, y_val_batch)
+                    
+                    val_epoch_loss += val_loss.item()
+                    val_epoch_acc += val_acc.item()
+
             loss_stats['train'].append(train_epoch_loss/len(train_loader))
             accuracy_stats['train'].append(train_epoch_acc/len(train_loader))
+
+            loss_stats['val'].append(val_epoch_acc/len(val_loader))
+            accuracy_stats['val'].append(val_epoch_acc/len(val_loader))
             
-            print(f'Epoch {e+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} \
-                    Train Acc: {train_epoch_acc/len(train_loader):.3f}')
+            print(f'Epoch {e+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} | Val Loss: {val_epoch_loss/len(val_loader):.5f} | Train Acc: {train_epoch_acc/len(train_loader):.3f}| Val Acc: {val_epoch_acc/len(val_loader):.3f}')
 
         return model, accuracy_stats, loss_stats
 
@@ -127,7 +150,7 @@ class ClassifierDataset(Dataset):
     def __len__ (self):
         return len(self.X_data)
 
-class classifierNN(nn.Module):
+class classifierDNN(nn.Module):
     """DNN architecture
 
     Args:
@@ -135,7 +158,7 @@ class classifierNN(nn.Module):
     """
     def __init__(self, num_features, num_class):
         # super.__init__()
-        super(classifierNN, self).__init__()
+        super(classifierDNN, self).__init__()
 
         self.layer1 = nn.Linear(num_features, 512)
         self.layer2 = nn.Linear(512, 128)
@@ -174,19 +197,24 @@ if __name__ == "__main__":
     target_values = data['target']
     data = data['data']
 
-    # split into train test
-    X_train, X_test, y_train, y_test = train_test_split(data, target_values, test_size=0.1, \
+    # split into train test and val
+    X_train, X_test, y_train, y_test = train_test_split(data, target_values, test_size=0.2, \
         stratify=target_values, random_state=2020)
+
+    X_test, X_val, y_test, y_val = train_test_split(X_test, y_test, test_size=0.5, \
+        stratify=y_test, random_state=2020)
     
     # normalize the data
     scaler = MinMaxScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
+    X_val = scaler.transform(X_val)
 
     X_train, y_train = np.array(X_train), np.array(y_train)
     X_test, y_test = np.array(X_test), np.array(y_test)
+    X_val, y_val = np.array(X_val), np.array(y_val)
 
-    print (f"Train size:{X_train.shape}, Test size:{X_test.shape}")
-    classifier = pyClassifier(X_train, X_test, y_train, y_test)
+    print (f"Train size:{X_train.shape}, Test size:{X_test.shape}, Val size: {X_val.shape}")
+    classifier = pyClassifier(X_train, X_test, X_val, y_train, y_test, y_val)
     classifier.fitNN()
 
