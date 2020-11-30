@@ -8,16 +8,17 @@ from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
 from tqdm import tqdm
+from sklearn.metrics import classification_report
 
 class pyClassifier():
     """
     """
-    def __init__(self, X_train, X_test,X_val, y_train, y_test, y_val):
+    def __init__(self, X_train,X_val, y_train, y_val):
         # super.__init__()
         self.X_train = X_train
-        self.X_test = X_test
+        # self.X_test = X_test
         self.y_train = y_train
-        self.y_test = y_test
+        # self.y_test = y_test
         self.X_val = X_val
         self.y_val = y_val
 
@@ -35,9 +36,6 @@ class pyClassifier():
         train_dataset = ClassifierDataset(torch.from_numpy(self.X_train).float(), \
             torch.from_numpy(self.y_train).long())
 
-        test_dataset = ClassifierDataset(torch.from_numpy(self.X_test).float(), \
-            torch.from_numpy(self.y_test).long())
-
         val_dataset = ClassifierDataset(torch.from_numpy(self.X_val).float(), \
             torch.from_numpy(self.y_val).long())
 
@@ -46,25 +44,24 @@ class pyClassifier():
                                   batch_size=batch_size,
                                   shuffle=True)
         
-        test_loader = DataLoader(dataset = test_dataset, batch_size=1)
         val_loader = DataLoader(dataset = val_dataset, batch_size=1)
-        return train_loader, test_loader,val_loader
+        return train_loader,val_loader
 
     
-    def fitNN(self, epoch = 10, lr = 0.01):
+    def fit(self, epoch = 10, lr = 0.01):
         """
         docstring
         """
         # dataprep
-        train_loader, test_loader,val_loader = self.processData()
+        train_loader,val_loader = self.processData()
         
         # setup
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        print (f"Using {device}")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print (f"Using {self.device}")
         
         # model call and loss
         model = classifierDNN(num_features=self.NUM_FEATURES, num_class=self.NUM_CLASSES)
-        model.to(device)
+        model.to(self.device)
 
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(model.parameters(), lr = lr)
@@ -84,7 +81,7 @@ class pyClassifier():
 
             model.train()
             for X_train_batch, y_train_batch in train_loader:
-                X_train_batch, y_train_batch = X_train_batch.to(device), y_train_batch.to(device)
+                X_train_batch, y_train_batch = X_train_batch.to(self.device), y_train_batch.to(self.device)
                 optimizer.zero_grad()
 
                 y_train_pred = model(X_train_batch)
@@ -104,7 +101,7 @@ class pyClassifier():
 
                 model.eval()
                 for X_val_batch, y_val_batch in val_loader:
-                    X_val_batch, y_val_batch = X_val_batch.to(device), y_val_batch.to(device)
+                    X_val_batch, y_val_batch = X_val_batch.to(self.device), y_val_batch.to(self.device)
 
                     y_val_pred = model(X_val_batch)
                     val_loss = criterion(y_val_pred, y_val_batch)
@@ -123,6 +120,31 @@ class pyClassifier():
 
         return model, accuracy_stats, loss_stats
 
+    def predict(self, model, X_test):
+        """To predict for the test data
+
+        Args:
+            model ([object]): [Trained torch model object]
+            X_test ([type]): [Testing data for inferencing]
+        """
+
+        test_dataset = ClassifierDataset(torch.from_numpy(X_test).float(), torch.from_numpy(np.array(range(0, len(X_test)))).long())
+        test_loader = DataLoader(dataset = test_dataset, batch_size=1)
+        y_pred_list = []
+
+        # prediction
+        with torch.no_grad():
+            model.eval()
+            for X_batch, _ in test_loader:
+                X_batch = X_batch.to(self.device)
+                y_test_pred = model(X_batch)
+
+                y_test_pred = torch.log_softmax(y_test_pred, dim = 1)
+                _, y_pred_tags = torch.max(y_test_pred, dim = 1)
+                y_pred_list.append(y_pred_tags.cpu().numpy())
+
+        y_pred_list = [a.squeeze().tolist() for a in y_pred_list]
+        return y_pred_list
 
     def multi_acc(self, y_pred, y_test):
         y_pred_softmax = torch.log_softmax(y_pred, dim = 1)
@@ -215,6 +237,10 @@ if __name__ == "__main__":
     X_val, y_val = np.array(X_val), np.array(y_val)
 
     print (f"Train size:{X_train.shape}, Test size:{X_test.shape}, Val size: {X_val.shape}")
-    classifier = pyClassifier(X_train, X_test, X_val, y_train, y_test, y_val)
-    classifier.fitNN()
+    classifier = pyClassifier(X_train, X_val, y_train, y_val)
+    fitted_model, accuracy_dict, loss_dict = classifier.fit()
+
+    # prediction and classification report
+    predictions_test = classifier.predict(fitted_model, X_test)
+    print (classification_report(y_test, predictions_test))
 
